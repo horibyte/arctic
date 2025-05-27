@@ -117,7 +117,7 @@ print_hex_byte:
 
 ; --- Data Messages ---
 msg_system_booting         db 'Booting from PhysicalDrives/FDA1', 0x0d, 0x0a, 0
-msg_version_short          db 'Horibyte Arctic Pre-Alpha 0.1 Build 3', 0x0d, 0x0a, 0
+msg_version_short          db 'Horibyte Arctic Pre-Alpha 0.1 Build 4', 0x0d, 0x0a, 0
 msg_loading_osload_short   db 'Loading OS Loader...', 0x0d, 0x0a, 0
 error_reset_short          db 'FAILED (Reset): 0x', 0x0d, 0x0a, 0
 error_read_short           db 'FAILED (Read): 0x', 0x0d, 0x0a, 0
