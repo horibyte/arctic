@@ -100,7 +100,7 @@ print_string_osload:
     ret                 ; Return from function
 
 ; --- Data Messages (for osload.asm) ---
-os_version_msg      db 'Horibyte Arctic [Version 0.1.4]', 0x0d, 0x0a, 0
+os_version_msg      db 'Horibyte Arctic Standard [Version 0.1.5]', 0x0d, 0x0a, 0
 
 newline_char        db 0x0d, 0x0a, 0
 

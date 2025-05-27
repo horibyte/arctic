@@ -3,7 +3,7 @@ import os
 BOOTLOADER_BIN = "bootloader.bin"
 OSLOAD_BIN = "osload.bin"
 REKANTO_BIN = "rekanto.bin"  # Path to your Rekanto Kernel binary
-OUTPUT_IMG = "en-us_0.1.4_horibyte_arctic_prealpha_64.img"
+OUTPUT_IMG = "en-us_0.1.5_horibyte_arctic_prealpha_19.img"
 SECTOR_SIZE = 512
 IMAGE_SIZE_MB = 1.44  # Standard floppy disk size (e.g., 1.44MB)
 

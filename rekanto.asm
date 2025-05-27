@@ -37,7 +37,7 @@ cli_loop_rekanto:
 
     ; Read command from user
     mov di, input_buffer_rekanto ; Store input starting here
-    xor cx, cx                   ; CX = 0 (current input length)
+    xor cx, cx                     ; CX = 0 (current input length)
     call read_input_line_rekanto ; Read a line of input
 
     ; A blank line after input for better readability
@@ -48,10 +48,10 @@ cli_loop_rekanto:
     ; Point SI to the user's input buffer for comparisons
     mov si, input_buffer_rekanto
 
-    ; Compare full string for exact matches (help, clear, shutdown)
+    ; Compare full string for exact matches (help, clear, shutdown, ver)
     mov bx, help_cmd_str_rekanto
     call compare_strings_rekanto
-    jc .is_help_rekanto         ; If CF is set, strings match
+    jc .is_help_rekanto
     
     mov bx, clear_cmd_str_rekanto
     call compare_strings_rekanto
@@ -60,6 +60,10 @@ cli_loop_rekanto:
     mov bx, shutdown_cmd_str_rekanto
     call compare_strings_rekanto
     jc .is_shutdown_rekanto
+
+    mov bx, ver_cmd_str_rekanto     ; Check for "ver" command
+    call compare_strings_rekanto
+    jc .is_ver_rekanto
 
     ; --- Handle "echo" command specifically ---
     ; Check if input starts with "echo "
@@ -104,6 +108,15 @@ cli_loop_rekanto:
     call print_string_rekanto
     jmp cli_loop_rekanto
 
+.is_ver_rekanto:
+    mov si, ver_msg_line1
+    call print_string_rekanto
+    mov si, ver_msg_line2
+    call print_string_rekanto
+    mov si, ver_msg_line3
+    call print_string_rekanto
+    jmp cli_loop_rekanto
+
 .is_shutdown_rekanto:
     mov si, shutdown_msg_rekanto
     call print_string_rekanto
@@ -144,54 +157,54 @@ print_string_rekanto:
 read_input_line_rekanto:
     pusha           ; Save registers
     mov di, input_buffer_rekanto ; DI points to buffer start
-    xor cx, cx           ; CX = 0 (current length of input)
+    xor cx, cx               ; CX = 0 (current length of input)
 .read_char_loop:
-    mov ah, 0x00         ; BIOS get keyboard character (with wait)
-    int 0x16             ; AL = character, AH = scan code
+    mov ah, 0x00             ; BIOS get keyboard character (with wait)
+    int 0x16                 ; AL = character, AH = scan code
 
-    cmp al, 0x0D         ; Check for Enter key (CR)
-    je .done_reading     ; If Enter, finish input
+    cmp al, 0x0D             ; Check for Enter key (CR)
+    je .done_reading         ; If Enter, finish input
 
-    cmp al, 0x08         ; Check for Backspace
+    cmp al, 0x08             ; Check for Backspace
     je .handle_backspace
 
     ; Only process printable ASCII characters
-    cmp al, 0x20         ; ASCII space (lowest printable)
-    jb .read_char_loop   ; If below space, not printable (e.g., control char)
-    cmp al, 0x7E         ; ASCII tilde (highest printable)
-    ja .read_char_loop   ; If above tilde, not printable
+    cmp al, 0x20             ; ASCII space (lowest printable)
+    jb .read_char_loop       ; If below space, not printable (e.g., control char)
+    cmp al, 0x7E             ; ASCII tilde (highest printable)
+    ja .read_char_loop       ; If above tilde, not printable
 
     ; Check if buffer is full
     cmp cx, MAX_COMMAND_LEN - 1 ; Leave space for null terminator
-    ja .read_char_loop   ; If buffer full, ignore character
+    ja .read_char_loop       ; If buffer full, ignore character
 
     ; Store character in buffer and echo it
-    stosb                ; Store AL into DS:DI, increment DI
-    inc cx               ; Increment length
-    mov ah, 0x0e         ; Echo character to screen
+    stosb                    ; Store AL into DS:DI, increment DI
+    inc cx                   ; Increment length
+    mov ah, 0x0e             ; Echo character to screen
     int 0x10
     jmp .read_char_loop
 
 .handle_backspace:
-    cmp cx, 0            ; Don't backspace if buffer is empty
+    cmp cx, 0                ; Don't backspace if buffer is empty
     je .read_char_loop
 
-    dec cx               ; Decrement length
-    dec di               ; Move DI back
-    mov byte [di], 0     ; Clear character in buffer (optional, but good practice)
+    dec cx                   ; Decrement length
+    dec di                   ; Move DI back
+    mov byte [di], 0         ; Clear character in buffer (optional, but good practice)
 
     ; Erase character from screen: backspace, print space, backspace again
     mov ah, 0x0e
-    mov al, 0x08         ; Backspace
+    mov al, 0x08             ; Backspace
     int 0x10
-    mov al, ' '          ; Print a space
+    mov al, ' '              ; Print a space
     int 0x10
-    mov al, 0x08         ; Backspace again
+    mov al, 0x08             ; Backspace again
     int 0x10
     jmp .read_char_loop
 
 .done_reading:
-    mov byte [di], 0     ; Null-terminate the input string
+    mov byte [di], 0         ; Null-terminate the input string
     ; Print a newline after user presses Enter, but before prompt
     mov si, newline_char_rekanto
     call print_string_rekanto
@@ -207,32 +220,32 @@ compare_strings_rekanto:
     push cx
     push di
     
-    xor cx, cx             ; Clear CX
-    mov di, si             ; Use DI to iterate through SI (input)
-    mov si, bx             ; SI will iterate through BX (command)
+    xor cx, cx               ; Clear CX
+    mov di, si               ; Use DI to iterate through SI (input)
+    mov si, bx               ; SI will iterate through BX (command)
     
 .loop_compare:
-    lodsb                  ; Load byte from [DS:SI] (command char) into AL, SI++
-    mov bl, byte [di]      ; Load byte from [DS:DI] (input char) into BL
+    lodsb                    ; Load byte from [DS:SI] (command char) into AL, SI++
+    mov bl, byte [di]        ; Load byte from [DS:DI] (input char) into BL
     
-    cmp al, bl             ; Compare characters
-    jne .no_match          ; If not equal, strings don't match
+    cmp al, bl               ; Compare characters
+    jne .no_match            ; If not equal, strings don't match
 
-    cmp al, 0              ; Check if we reached null terminator for command string
-    je .match              ; If command string ended, and so did input, it's a match
+    cmp al, 0                ; Check if we reached null terminator for command string
+    je .match                ; If command string ended, and so did input, it's a match
 
-    inc di                 ; Move to next input char
-    jmp .loop_compare      ; Continue comparison
+    inc di                   ; Move to next input char
+    jmp .loop_compare        ; Continue comparison
 
 .no_match:
-    clc                    ; Clear Carry Flag (no match)
+    clc                      ; Clear Carry Flag (no match)
     jmp .done_compare
 
 .match:
-    cmp bl, 0              ; Ensure input string also ended at the same point
-    jne .no_match          ; If input string is longer, it's not a match
+    cmp bl, 0                ; Ensure input string also ended at the same point
+    jne .no_match            ; If input string is longer, it's not a match
 
-    stc                    ; Set Carry Flag (match)
+    stc                      ; Set Carry Flag (match)
 
 .done_compare:
     pop di
@@ -251,27 +264,27 @@ compare_prefix_rekanto:
     push cx
     push di
     
-    mov di, si             ; DI iterates through input string
-    mov si, bx             ; SI iterates through prefix string (e.g., "echo ")
+    mov di, si               ; DI iterates through input string
+    mov si, bx               ; SI iterates through prefix string (e.g., "echo ")
     
 .loop_compare_prefix:
-    lodsb                  ; Load byte from [DS:SI] (prefix char) into AL, SI++
-    cmp al, 0              ; Check if we reached null terminator for prefix string
-    je .match_prefix       ; If prefix string ended, it's a match
+    lodsb                    ; Load byte from [DS:SI] (prefix char) into AL, SI++
+    cmp al, 0                ; Check if we reached null terminator for prefix string
+    je .match_prefix         ; If prefix string ended, it's a match
 
-    mov bl, byte [di]      ; Load byte from [DS:DI] (input char) into BL
-    cmp al, bl             ; Compare characters
-    jne .no_match_prefix   ; If not equal, no match
+    mov bl, byte [di]        ; Load byte from [DS:DI] (input char) into BL
+    cmp al, bl               ; Compare characters
+    jne .no_match_prefix     ; If not equal, no match
 
-    inc di                 ; Move to next input char in input_buffer
+    inc di                   ; Move to next input char in input_buffer
     jmp .loop_compare_prefix ; Continue comparison
 
 .no_match_prefix:
-    clc                    ; Clear Carry Flag (no match)
+    clc                      ; Clear Carry Flag (no match)
     jmp .done_compare_prefix
 
 .match_prefix:
-    stc                    ; Set Carry Flag (match)
+    stc                      ; Set Carry Flag (match)
 
 .done_compare_prefix:
     pop di
@@ -291,17 +304,24 @@ unknown_cmd_msg_rekanto     db 'Command is not recognized, type "help" for a lis
 ; Command strings (must be null-terminated)
 help_cmd_str_rekanto        db 'help', 0
 clear_cmd_str_rekanto       db 'clear', 0
-echo_cmd_str_rekanto        db 'echo', 0            ; For exact "echo" command
-echo_cmd_prefix_rekanto     db 'echo ', 0           ; For "echo " followed by arguments
+echo_cmd_str_rekanto        db 'echo', 0        ; For exact "echo" command
+echo_cmd_prefix_rekanto     db 'echo ', 0       ; For "echo " followed by arguments
+ver_cmd_str_rekanto         db 'ver', 0         ; New 'ver' command string
 shutdown_cmd_str_rekanto    db 'shutdown', 0
 
 ; Help message
 help_msg_rekanto            db 'Available commands:', 0x0d, 0x0a
-                            db '  help       - Display this help message', 0x0d, 0x0a
-                            db '  clear      - Clear the screen', 0x0d, 0x0a
-                            db '  echo <text> - Prints text (e.g., echo Hello World)', 0x0d, 0x0a
-                            db '  shutdown   - Halts the system', 0x0d, 0x0a
+                            db '  help         - Display this help message', 0x0d, 0x0a
+                            db '  clear        - Clear the screen', 0x0d, 0x0a
+                            db '  echo <text>  - Prints text (e.g., echo Hello World)', 0x0d, 0x0a
+                            db '  ver          - Display version information', 0x0d, 0x0a
+                            db '  shutdown     - Halts the system', 0x0d, 0x0a
                             db '  (More commands coming soon!)', 0x0d, 0x0a, 0
+
+; New version messages for 'ver' command
+ver_msg_line1       db 'Horibyte Arctic [Version 0.1.5] - PreAlpha Release', 0x0d, 0x0a, 0
+ver_msg_line2       db '16-Bit Real Mode', 0x0d, 0x0a, 0
+ver_msg_line3       db 'Copyright (c) 2025 Horibyte. Source code licensed under GNU GPL 3.0', 0x0d, 0x0a, 0
 
 shutdown_msg_rekanto        db 'Operation not supported. System halted.', 0x0d, 0x0a, 0
 
