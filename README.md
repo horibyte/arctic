@@ -10,7 +10,7 @@ Due to its simplicity, you can easily compile it.
 
 First off, grab your copy of the source code via `git clone` in your preferred terminal.
 
-Use [NASM](https://nasm.us) (Netwide Assembler) to compile the assembly files to binary files using `nasm -f bin file.asm -o file.bin`. To compile the files in this repo, use `nasm -f bin bootloader.asm -o bootloader.bin` and `nasm -f bin osload.asm -o osload.bin` respectively.
+Use [NASM](https://nasm.us) (Netwide Assembler) to compile the assembly files to binary files using `nasm -f bin file.asm -o file.bin`. To compile the files in this repo, use `nasm -f bin bootloader.asm -o bootloader.bin`, `nasm -f bin rekanto.asm -o rekanto.bin` and `nasm -f bin osload.asm -o osload.bin` respectively.
 
 Then to make the final bootable image, get [Python](https://python.org) and run `make.py` in the terminal, then a `.img` file should appear.
 
