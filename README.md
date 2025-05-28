@@ -8,4 +8,6 @@ Only correctly runs within VMware, to make it load `osload.bin`, create a new Vi
 
 If you want to debug this, use GDB & QEMU
 
-# THIS IS NOT AN STABLE RELEASE.
+# THIS IS NOT A STABLE RELEASE.
+
+Do not expect this to work at all.
