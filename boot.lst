@@ -1,0 +1,249 @@
+     1                                  ; ******************************************************************
+     2                                  ; * *
+     3                                  ; * Horibyte Arctic32 Midori Bootloader                            *
+     4                                  ; * Loads 32-bit kernel (osload.bin and rekanto.bin) and switches  *
+     5                                  ; * to Protected Mode.                                             *
+     6                                  ; * Copyright (c) 2025 Horibyte                                    *
+     7                                  ; * *
+     8                                  ; ******************************************************************
+     9                                  
+    10                                  ; I welcome you to the most ass bootloader ever - horibyte
+    11                                  
+    12                                  [org 0x7C00]
+    13                                  bits 16
+    14                                  
+    15                                  ; --- CONSTANTS ---
+    16                                  OSLOAD_LBA          equ 1
+    17                                  OSLOAD_SECTORS      equ 10
+    18                                  REKANTO_LBA         equ OSLOAD_LBA + OSLOAD_SECTORS
+    19                                  REKANTO_SECTORS     equ 30
+    20                                  
+    21                                  KERNEL_LOAD_ADDR    equ 0x100000      ; 1MB (20-bit linear address)
+    22                                  REKANTO_LOAD_ADDR   equ KERNEL_LOAD_ADDR + (OSLOAD_SECTORS * 512) ; Load Rekanto immediately after osload (0x101400)
+    23                                  
+    24                                  ; Corrected segment and offset calculations for BIOS INT 13h (AH=0x42) DAP
+    25                                  ; The segment must be <= 0xFFFF. The offset must be <= 0xFFFF.
+    26                                  ; For KERNEL_LOAD_ADDR (0x100000):
+    27                                  KERNEL_LOAD_OFFSET  equ 0x0000
+    28                                  KERNEL_LOAD_SEGMENT equ 0x1000        ; (0x1000 * 16 = 0x10000, 0x10000 + 0x0000 = 0x100000)
+    29                                  
+    30                                  ; For REKANTO_LOAD_ADDR (0x101400):
+    31                                  ; We can keep the same segment as KERNEL_LOAD_SEGMENT and adjust the offset.
+    32                                  REKANTO_LOAD_OFFSET equ REKANTO_LOAD_ADDR - (KERNEL_LOAD_SEGMENT * 16) ; 0x101400 - 0x10000 = 0x1400
+    33                                  REKANTO_LOAD_SEGMENT equ KERNEL_LOAD_SEGMENT                         ; 0x1000
+    34                                  
+    35                                  CODE_SEG equ 0x08
+    36                                  DATA_SEG equ 0x10
+    37                                  
+    38                                  ; --- ENTRY POINT ---
+    39                                  start:
+    40                                      ; Set up segments
+    41 00000000 31C0                        xor ax, ax
+    42 00000002 8ED8                        mov ds, ax
+    43 00000004 8EC0                        mov es, ax
+    44 00000006 8ED0                        mov ss, ax          ; Set SS to 0 (to use a stack below 0x7C00)
+    45 00000008 BC007C                      mov sp, 0x7C00      ; Stack grows downwards from 0x7C00
+    46                                  
+    47                                      ; For debugging, print a message
+    48 0000000B BE[2201]                    mov si, initial_msg
+    49 0000000E E8D500                      call print_string_16bit
+    50                                  
+    51                                      ; --- Load osload.bin ---
+    52 00000011 BE[3801]                    mov si, loading_osload_msg
+    53 00000014 E8CF00                      call print_string_16bit
+    54 00000017 C706[F600]0A00              mov word [dap + 2], OSLOAD_SECTORS      ; Number of sectors
+    55 0000001D C706[F800]0000              mov word [dap + 4], KERNEL_LOAD_OFFSET  ; Offset of data buffer
+    56 00000023 C706[FA00]0010              mov word [dap + 6], KERNEL_LOAD_SEGMENT ; Segment of data buffer
+    57 00000029 66C706[FC00]010000-         mov dword [dap + 8], OSLOAD_LBA         ; LBA start address
+    57 00000031 00                 
+    58                                  
+    59 00000032 B442                        mov ah, 0x42
+    60 00000034 8A16[C801]                  mov dl, byte [boot_drive]
+    61 00000038 BE[F400]                    mov si, dap
+    62 0000003B CD13                        int 0x13
+    63 0000003D 0F828F00                    jc disk_error                           ; Jump if Carry Flag is set (error)
+    64 00000041 BE[4701]                    mov si, osload_loaded_msg
+    65 00000044 E89F00                      call print_string_16bit
+    66                                  
+    67                                      ; --- Load rekanto.bin ---
+    68 00000047 BE[4D01]                    mov si, loading_rekanto_msg
+    69 0000004A E89900                      call print_string_16bit
+    70 0000004D C706[F600]1E00              mov word [dap + 2], REKANTO_SECTORS     ; Number of sectors
+    71 00000053 C706[F800]0014              mov word [dap + 4], REKANTO_LOAD_OFFSET ; Offset of data buffer
+    71          ******************       warning: word data exceeds bounds [-w+number-overflow]
+    72 00000059 C706[FA00]0010              mov word [dap + 6], REKANTO_LOAD_SEGMENT; Segment of data buffer
+    73 0000005F 66C706[FC00]0B0000-         mov dword [dap + 8], REKANTO_LBA         ; LBA start address
+    73 00000067 00                 
+    74                                  
+    75 00000068 B442                        mov ah, 0x42
+    76 0000006A 8A16[C801]                  mov dl, byte [boot_drive]
+    77 0000006E BE[F400]                    mov si, dap
+    78 00000071 CD13                        int 0x13
+    79 00000073 725B                        jc disk_error
+    80 00000075 BE[5D01]                    mov si, rekanto_loaded_msg
+    81 00000078 E86B00                      call print_string_16bit
+    82                                  
+    83                                      ; --- Enable A20 Line ---
+    84 0000007B BE[6301]                    mov si, a20_enabling_msg
+    85 0000007E E86500                      call print_string_16bit
+    86 00000081 B80124                      mov ax, 0x2401  ; Enable A20
+    87 00000084 CD15                        int 0x15
+    88 00000086 7253                        jc a20_error
+    89 00000088 BE[6A01]                    mov si, a20_enabled_msg
+    90 0000008B E85800                      call print_string_16bit
+    91                                  
+    92                                      ; --- Load GDT ---
+    93 0000008E BE[7401]                    mov si, loading_gdt_msg
+    94 00000091 E85200                      call print_string_16bit
+    95 00000094 0F0116[1C01]                lgdt [GDT_POINTER]                      ; Load GDT register
+    96 00000099 BE[8001]                    mov si, gdt_loaded_msg
+    97 0000009C E84700                      call print_string_16bit
+    98                                  
+    99                                      ; --- Disable Interrupts ---
+   100 0000009F FA                          cli
+   101 000000A0 BE[8A01]                    mov si, cli_msg
+   102 000000A3 E84000                      call print_string_16bit
+   103                                  
+   104                                      ; --- Prepare for Protected Mode Switch ---
+   105 000000A6 BE[9601]                    mov si, switching_to_pm_msg
+   106 000000A9 E83A00                      call print_string_16bit
+   107                                  
+   108                                      ; --- Set CR0 to enable Protected Mode ---
+   109 000000AC 0F20C0                      mov eax, cr0
+   110 000000AF 6683C801                    or eax, 1
+   111 000000B3 0F22C0                      mov cr0, eax
+   112                                  
+   113                                      ; --- Far Jump to 32-bit Code ---
+   114                                      ; After setting CR0.PE, CPU is in Protected Mode.
+   115                                      ; CS is still a 16-bit segment register, so reload it with a Protected Mode selector.
+   116                                      ; JMP target: CODE_SEG is selector, KERNEL_LOAD_ADDR is linear address.
+   117 000000B6 EA[BB00]0800                jmp CODE_SEG:pm32_entry
+   118                                  
+   119                                      [bits 32]
+   120                                  pm32_entry:
+   121                                      ; Reload segment registers with data selector
+   122 000000BB 66B81000                    mov ax, DATA_SEG
+   123 000000BF 8ED8                        mov ds, ax
+   124 000000C1 8EC0                        mov es, ax
+   125 000000C3 8EE0                        mov fs, ax
+   126 000000C5 8EE8                        mov gs, ax
+   127 000000C7 8ED0                        mov ss, ax
+   128                                  
+   129                                      ; Set up stack pointer
+   130 000000C9 BC00000900                  mov esp, 0x90000 ; This stack pointer is fine if 0x90000 is within your data segment
+   131                                  
+   132                                      ; Here you can add your 32-bit kernel code
+   133                                      ; For now just infinite loop to prevent triple fault
+   134                                  .loop:
+   135 000000CE EBFE                        jmp .loop
+   136                                  
+   137                                  ; --- Error Handlers ---
+   138                                  disk_error:
+   139 000000D0 66BE[A101]                  mov si, disk_error_msg
+   140 000000D4 E80D000000                  call print_string_16bit
+   141 000000D9 EBFE                        jmp $
+   142                                  
+   143                                  a20_error:
+   144 000000DB 66BE[B501]                  mov si, a20_error_msg
+   145 000000DF E802000000                  call print_string_16bit
+   146 000000E4 EBFE                        jmp $
+   147                                  
+   148                                  ; --- Subroutines (16-bit) ---
+   149                                  ; print_string_16bit: Prints a null-terminated string at DS:SI using BIOS INT 10h
+   150                                  print_string_16bit:
+   151 000000E6 60                          pusha
+   152 000000E7 B40E                        mov ah, 0x0e
+   153                                  .loop:
+   154 000000E9 AC                          lodsb           ; Load byte from DS:SI into AL, increment SI
+   155 000000EA 08C0                        or al, al       ; Check if AL is null terminator
+   156 000000EC 7404                        jz .done
+   157 000000EE CD10                        int 0x10        ; BIOS Teletype Output
+   158 000000F0 EBF7                        jmp .loop
+   159                                  .done:
+   160 000000F2 61                          popa
+   161 000000F3 C3                          ret
+   162                                  
+   163                                  ; ====================================================================
+   164                                  ; --- Data Sections (Moved to after executable code for .bin) ---
+   165                                  ; ====================================================================
+   166                                  
+   167                                  ; --- DISK ADDRESS PACKET (DAP) ---
+   168                                  dap:
+   169 000000F4 10                          db 0x10             ; Size of packet (16 bytes)
+   170 000000F5 00                          db 0                ; Reserved
+   171 000000F6 0000                        dw 0                ; Number of blocks (sectors) to read (filled later)
+   172 000000F8 0000                        dw 0                ; Offset of data buffer (filled later)
+   173 000000FA 0000                        dw 0                ; Segment of data buffer (filled later)
+   174 000000FC 00000000                    dd 0                ; Lower 32 bits of LBA (filled later)
+   175 00000100 00000000                    dd 0                ; Upper 32 bits of LBA (not used for current LBA range)
+   176                                  
+   177                                  ; --- GLOBAL DESCRIPTOR TABLE (GDT) ---
+   178                                  GDT_START:
+   179                                      ; Null Descriptor (required)
+   180 00000104 0000                        dw 0x0000           ; Limit (low)
+   181 00000106 0000                        dw 0x0000           ; Base (low)
+   182 00000108 00                          db 0x00             ; Base (middle)
+   183 00000109 00                          db 0x00             ; Access
+   184 0000010A 00                          db 0x00             ; Granularity
+   185 0000010B 00                          db 0x00             ; Base (high)
+   186                                  
+   187                                  CODE_SEG_DESCRIPTOR:
+   188 0000010C FFFF                        dw 0xFFFF           ; Limit (low) - 4GB limit for 32-bit mode (0xFFFFF * 4KB = 4GB)
+   189 0000010E 0000                        dw 0x0000           ; Base (low)
+   190 00000110 00                          db 0x00             ; Base (middle)
+   191 00000111 9A                          db 10011010b        ; Access byte: P=1 (present), DPL=00 (ring 0), S=1 (code/data), E=1 (executable), C=0 (conforming), R=1 (readable), A=0 (accessed)
+   192 00000112 CF                          db 11001111b        ; Granularity byte: G=1 (4KB granularity), D/B=1 (32-bit default op size), L=0 (64-bit not used), AVL=0 (available)
+   193 00000113 00                          db 0x00             ; Base (high)
+   194                                  
+   195                                  DATA_SEG_DESCRIPTOR:
+   196 00000114 FFFF                        dw 0xFFFF           ; Limit (low)
+   197 00000116 0000                        dw 0x0000           ; Base (low)
+   198 00000118 00                          db 0x00             ; Base (middle)
+   199 00000119 92                          db 10010010b        ; Access byte: P=1, DPL=00, S=1, E=0 (data), W=1 (writable), A=0
+   200 0000011A CF                          db 11001111b        ; Granularity byte: G=1, D/B=1, L=0, AVL=0
+   201 0000011B 00                          db 0x00             ; Base (high)
+   202                                  GDT_END:
+   203                                  
+   204                                  GDT_POINTER:
+   205 0000011C 1700                        dw GDT_END - GDT_START - 1  ; Limit of GDT (size - 1)
+   206 0000011E [04010000]                  dd GDT_START                ; Base address of GDT (absolute physical address)
+   207                                  
+   208                                  ; CODE_SEG and DATA_SEG are now defined as direct values, not relative to GDT_START
+   209                                  ; because they are used as selectors, not offsets from the GDT_POINTER base.
+   210                                  ; This is consistent with the hardcoded values (0x08 and 0x10) above.
+   211                                  ; If you prefer, you could keep them as `equ CODE_SEG_DESCRIPTOR - GDT_START` etc.
+   212                                  ; but for now, let's stick with what you have that works.
+   213                                  
+   214                                  
+   215                                  ; --- String Messages ---
+   216 00000122 426F6F74696E672041-     initial_msg         db 'Booting Arctic32...', 0x0d, 0x0a, 0
+   216 0000012B 726374696333322E2E-
+   216 00000134 2E0D0A00           
+   217 00000138 4C6F6164206F736C6F-     loading_osload_msg  db 'Load osload...', 0
+   217 00000141 61642E2E2E00       
+   218 00000147 4F6B210D0A00            osload_loaded_msg   db 'Ok!', 0x0d, 0x0a, 0
+   219 0000014D 4C6F61642072656B61-     loading_rekanto_msg db 'Load rekanto...', 0
+   219 00000156 6E746F2E2E2E00     
+   220 0000015D 4F6B210D0A00            rekanto_loaded_msg  db 'Ok!', 0x0d, 0x0a, 0
+   221 00000163 4132302E2E2E00          a20_enabling_msg    db 'A20...', 0
+   222 0000016A 413230206F6B210D0A-     a20_enabled_msg     db 'A20 ok!', 0x0d, 0x0a, 0
+   222 00000173 00                 
+   223 00000174 4C6F6164204744542E-     loading_gdt_msg     db 'Load GDT...', 0
+   223 0000017D 2E2E00             
+   224 00000180 474454206F6B210D0A-     gdt_loaded_msg      db 'GDT ok!', 0x0d, 0x0a, 0
+   224 00000189 00                 
+   225 0000018A 496E7473206F66662E-     cli_msg             db 'Ints off.', 0x0d, 0x0a, 0
+   225 00000193 0D0A00             
+   226 00000196 546F20504D2E2E2E0D-     switching_to_pm_msg db 'To PM...', 0x0d, 0x0a, 0
+   226 0000019F 0A00               
+   227 000001A1 4469736B2045727221-     disk_error_msg      db 'Disk Err! Halted.', 0x0d, 0x0a, 0
+   227 000001AA 2048616C7465642E0D-
+   227 000001B3 0A00               
+   228 000001B5 413230204572722120-     a20_error_msg       db 'A20 Err! Halted.', 0x0d, 0x0a, 0
+   228 000001BE 48616C7465642E0D0A-
+   228 000001C7 00                 
+   229 000001C8 80                      boot_drive          db 0x80
+   230                                  
+   231                                  ; --- Padding ---
+   232 000001C9 00<rep 35h>             times 510 - ($ - $$) db 0
+   233 000001FE 55AA                    dw 0xAA55

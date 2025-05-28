@@ -1,0 +1,192 @@
+     1                                  ; ******************************************************************
+     2                                  ; *                                                                *
+     3                                  ; * Horibyte Arctic32 Kernel Loader                                *
+     4                                  ; * Loads 32-bit kernel (ReKanto32)                                *
+     5                                  ; * Copyright (c) 2025 Horibyte                                    *
+     6                                  ; *                                                                *
+     7                                  ; ******************************************************************
+     8                                  
+     9                                  
+    10                                  [org 0x100000] ; Loaded by boot.asm at 1MB
+    11                                  bits 32
+    12                                  
+    13                                  ; --- Constants ---
+    14                                  ; Video memory address for text mode (VGA)
+    15                                  VGA_TEXT_MODE_ADDR equ 0xB8000
+    16                                  ; Attribute for text (white on black)
+    17                                  DEFAULT_CHAR_ATTR equ 0x07
+    18                                  
+    19                                  ; --- Entry Point for 32-bit Kernel ---
+    20                                  start_32bit_kernel:
+    21                                      ; Initialize 32-bit segment registers
+    22                                      ; Use the data segment selector from GDT (0x10 for our GDT)
+    23 00000000 B810000000                  mov eax, 0x10
+    24 00000005 8ED8                        mov ds, eax
+    25 00000007 8EC0                        mov es, eax
+    26 00000009 8EE0                        mov fs, eax
+    27 0000000B 8EE8                        mov gs, eax
+    28 0000000D 8ED0                        mov ss, eax ; Set SS to data segment for stack
+    29                                  
+    30                                      ; Setup 32-bit stack
+    31                                      ; Assuming 0x100000 is base of kernel, stack can be at 0x1FFFFF (just below 2MB)
+    32 0000000F BCFFFF1F00                  mov esp, 0x1FFFFF
+    33                                  
+    34                                      ; Clear screen (using 32-bit direct video memory access)
+    35 00000014 E841000000                  call clear_screen_pm
+    36                                  
+    37                                      ; Print boot screen messages
+    38 00000019 BE[00010000]                mov esi, msg_testing_purpose
+    39 0000001E E857000000                  call print_string_pm
+    40 00000023 BE[1D010000]                mov esi, msg_horibyte_arctic
+    41 00000028 E84D000000                  call print_string_pm
+    42 0000002D BE[36010000]                mov esi, msg_mode_test
+    43 00000032 E843000000                  call print_string_pm
+    44 00000037 BE[5D010000]                mov esi, msg_build_version
+    45 0000003C E839000000                  call print_string_pm
+    46 00000041 BE[7B010000]                mov esi, msg_copyright
+    47 00000046 E82F000000                  call print_string_pm
+    48                                  
+    49                                      ; Add a blank line for readability
+    50 0000004B BE[99010000]                mov esi, newline_char_pm
+    51 00000050 E825000000                  call print_string_pm
+    52                                  
+    53                                      ; Jump to the main Rekanto kernel
+    54                                      ; Assuming rekanto.bin is loaded immediately after osload.bin
+    55                                      ; If osload.asm is 4KB (0x1000 bytes) long, then rekanto.asm starts at 0x100000 + 0x1000 = 0x101000
+    56 00000055 E9(00101000)                jmp 0x101000 ; Adjust if rekanto.asm is loaded at a different offset
+    57                                  
+    58                                  ; --- Subroutines for 32-bit Protected Mode ---
+    59                                  
+    60                                  ; clear_screen_pm: Clears the entire screen by writing spaces
+    61                                  clear_screen_pm:
+    62 0000005A 60                          pushad
+    63 0000005B BF00800B00                  mov edi, VGA_TEXT_MODE_ADDR
+    64 00000060 B9D0070000                  mov ecx, 80 * 25 ; Total characters on screen
+    65 00000065 B020                        mov al, ' '      ; Character to fill with
+    66 00000067 B407                        mov ah, DEFAULT_CHAR_ATTR ; Attribute
+    67 00000069 89C2                        mov edx, eax     ; Character + attribute
+    68 0000006B C1E208                      shl edx, 8
+    69 0000006E 09C2                        or edx, eax      ; edx = 0x07200720 (space with attribute, repeated twice)
+    70                                  
+    71                                      ; Fill dwords (4 bytes at a time)
+    72                                      .loop:
+    73 00000070 AB                              stosd ; Store EAX (char+attr) into [EDI], increment EDI by 4
+    74 00000071 AB                              stosd ; Store EAX (char+attr) into [EDI], increment EDI by 4
+    75 00000072 49                              dec ecx ; Decrement character count by 2
+    76 00000073 49                              dec ecx
+    77 00000074 85C9                            test ecx, ecx
+    78 00000076 75F8                            jnz .loop
+    79                                  
+    80 00000078 61                          popad
+    81 00000079 C3                          ret
+    82                                  
+    83                                  ; print_string_pm: Prints a null-terminated string at ESI to VGA text mode
+    84                                  ; ESI points to the string. Cursor position is handled by writing to VRAM directly.
+    85                                  print_string_pm:
+    86 0000007A 60                          pushad
+    87 0000007B BF00800B00                  mov edi, VGA_TEXT_MODE_ADDR ; Current video memory pointer (start)
+    88 00000080 BB00000000                  mov ebx, 0                  ; Character counter for newlines/scrolling
+    89                                  
+    90                                  .loop:
+    91 00000085 AC                          lodsb                       ; Load byte from [ESI] into AL, increment ESI
+    92 00000086 3C00                        cmp al, 0                   ; Check for null terminator
+    93 00000088 7474                        je .done
+    94                                  
+    95 0000008A 3C0D                        cmp al, 0x0D                ; Check for Carriage Return (CR)
+    96 0000008C 7410                        je .handle_cr
+    97                                  
+    98 0000008E 3C0A                        cmp al, 0x0A                ; Check for Line Feed (LF)
+    99 00000090 7420                        je .handle_lf
+   100                                  
+   101                                      ; Handle regular character
+   102 00000092 B407                        mov ah, DEFAULT_CHAR_ATTR   ; Character attribute (white on black)
+   103 00000094 66AB                        stosw                       ; Store AL (char) and AH (attr) as a word into [EDI], increment EDI by 2
+   104 00000096 43                          inc ebx                     ; Increment character counter
+   105 00000097 83FB50                      cmp ebx, 80                 ; Check if end of line
+   106 0000009A 7CE9                        jl .loop                    ; Not end of line, continue
+   107                                      ; If end of line, implicitly move to next line because EDI advanced
+   108                                  
+   109                                      ; Fall through to handle_lf to move to the next line
+   110 0000009C EB2A                        jmp .handle_lf_continue
+   111                                  
+   112                                  .handle_cr:
+   113                                      ; Reset EDI to the beginning of the current line
+   114                                      ; Current line = ebx / 80. Start of current line is VGA_TEXT_MODE_ADDR + (ebx / 80 * 80 * 2)
+   115                                      ; Or simply, calculate current row, then set column to 0.
+   116 0000009E 89F8                        mov eax, edi
+   117 000000A0 2D00800B00                  sub eax, VGA_TEXT_MODE_ADDR  ; Get current offset from start of VRAM
+   118 000000A5 31D2                        xor edx, edx
+   119 000000A7 B9A0000000                  mov ecx, 160                 ; Bytes per line (80 chars * 2 bytes/char)
+   120 000000AC F7F1                        div ecx                      ; EAX = current row index, EDX = byte offset within row
+   121 000000AE 29D7                        sub edi, edx                 ; Subtract current column offset to get to beginning of line
+   122 000000B0 EBD3                        jmp .loop
+   123                                  
+   124                                  .handle_lf:
+   125                                      ; Move EDI to the beginning of the next line
+   126                                      ; Current column position: (EDI - VGA_TEXT_MODE_ADDR) % 160
+   127 000000B2 89F8                        mov eax, edi
+   128 000000B4 2D00800B00                  sub eax, VGA_TEXT_MODE_ADDR  ; Get current offset from start of VRAM
+   129 000000B9 31D2                        xor edx, edx
+   130 000000BB B9A0000000                  mov ecx, 160                 ; Bytes per line (80 chars * 2 bytes/char)
+   131 000000C0 F7F1                        div ecx                      ; EAX = current row index, EDX = byte offset within row
+   132 000000C2 81C7A0000000                add edi, 160                 ; Move EDI to the start of the next line
+   133                                  
+   134                                  .handle_lf_continue:
+   135                                      ; Check for scrolling if we hit the end of the screen
+   136 000000C8 81FFA08F0B00                cmp edi, VGA_TEXT_MODE_ADDR + (80 * 25 * 2) ; Beyond last row?
+   137 000000CE 7CB5                        jl .loop ; No scrolling needed, continue
+   138                                  
+   139                                      ; Scroll screen up by one line
+   140 000000D0 56                          push esi                    ; Save ESI
+   141 000000D1 BEA0800B00                  mov esi, VGA_TEXT_MODE_ADDR + (80 * 2) ; Source: Second row
+   142 000000D6 BF00800B00                  mov edi, VGA_TEXT_MODE_ADDR         ; Destination: First row
+   143 000000DB B9C0030000                  mov ecx, 80 * 24 * 2 / 4    ; Copy 24 rows, 2 bytes/char, in dwords
+   144 000000E0 F3A5                        rep movsd                   ; Move 24 rows up
+   145                                  
+   146                                      ; Clear the last row
+   147 000000E2 BF008F0B00                  mov edi, VGA_TEXT_MODE_ADDR + (80 * 24 * 2) ; Start of last row
+   148 000000E7 B950000000                  mov ecx, 80                 ; 80 characters to clear
+   149 000000EC B020                        mov al, ' '                 ; Space character
+   150 000000EE B407                        mov ah, DEFAULT_CHAR_ATTR   ; Attribute
+   151                                      .clear_last_row_loop:
+   152 000000F0 66AB                            stosw                   ; Store character and attribute
+   153 000000F2 E2FC                            loop .clear_last_row_loop
+   154                                  
+   155 000000F4 5E                          pop esi                     ; Restore ESI
+   156                                      ; Reset EDI to the beginning of the new last line
+   157 000000F5 BF008F0B00                  mov edi, VGA_TEXT_MODE_ADDR + (80 * 24 * 2)
+   158 000000FA 31DB                        xor ebx, ebx                ; Reset character counter for the new line
+   159 000000FC EB87                        jmp .loop
+   160                                  
+   161                                  .done:
+   162 000000FE 61                          popad
+   163 000000FF C3                          ret
+   164                                  
+   165                                  ; --- Bootscreen Messages ---
+   166 00000100 466F72207465737469-     msg_testing_purpose  db "For testing purposes only.", 0x0D, 0x0A, 0
+   166 00000109 6E6720707572706F73-
+   166 00000112 6573206F6E6C792E0D-
+   166 0000011B 0A00               
+   167 0000011D 486F72696279746520-     msg_horibyte_arctic  db "Horibyte Arctic Server", 0x0D, 0x0A, 0
+   167 00000126 417263746963205365-
+   167 0000012F 727665720D0A00     
+   168 00000136 33322D424954205072-     msg_mode_test        db "32-BIT Protected Mode Developer Test", 0x0D, 0x0A, 0
+   168 0000013F 6F746563746564204D-
+   168 00000148 6F646520446576656C-
+   168 00000151 6F7065722054657374-
+   168 0000015A 0D0A00             
+   169 0000015D 5072652D416C706861-     msg_build_version    db "Pre-Alpha 0.1 Build 5 LAB02", 0x0D, 0x0A, 0
+   169 00000166 20302E31204275696C-
+   169 0000016F 642035204C41423032-
+   169 00000178 0D0A00             
+   170 0000017B 436F70797269676874-     msg_copyright        db "Copyright (c) 2025 Horibyte", 0x0D, 0x0A, 0
+   170 00000184 202863292032303235-
+   170 0000018D 20486F726962797465-
+   170 00000196 0D0A00             
+   171                                  
+   172 00000199 0D0A00                  newline_char_pm      db 0x0D, 0x0A, 0 ; General purpose newline for 32-bit mode
+   173                                  
+   174                                  ; --- Padding ---
+   175                                  ; Pad osload.asm to 4KB (0x1000 bytes) to align rekanto.asm easily
+   176                                  ; Important, do not change
+   177                                  ; times (0x1000 - ($ - $$)) db 0

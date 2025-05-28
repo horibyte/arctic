@@ -1,0 +1,783 @@
+     1                                  ; ******************************************************************
+     2                                  ; *                                                                *
+     3                                  ; * Horibyte Arctic32 ReKanto32 Kernel                             *
+     4                                  ; * Self-explanatory                                               *
+     5                                  ; * Copyright (c) 2025 Horibyte                                    *
+     6                                  ; *                                                                *
+     7                                  ; ******************************************************************
+     8                                  
+     9                                  ; shitty kernel moment
+    10                                  
+    11                                  
+    12                                  [org 0x101000] ; Starts at 0x100000
+    13                                  bits 16 ; how did we get here
+    14                                  
+    15                                  ; --- CONSTANTS ---
+    16                                  MAX_COMMAND_LEN equ 64  ; Maximum length of command user can type
+    17                                  VGA_TEXT_MODE_ADDR equ 0xB8000 ; Video memory address for text mode
+    18                                  DEFAULT_CHAR_ATTR equ 0x07    ; White on black
+    19                                  
+    20                                  ; --- GLOBAL VARIABLES  ---
+    21 00000000 00000000                current_cursor_pos_x dd 0 ; Current column (0-79)
+    22 00000004 00000000                current_cursor_pos_y dd 0 ; Current row (0-24)
+    23                                  
+    24                                  ; --- ENTRY POINT OF REKANTO.ASM ---
+    25                                  rekanto_entry_point:
+    26                                      ; Segment registers should already be set by osload.asm
+    27                                      ; Stack should already be set by osload.asm
+    28                                  
+    29                                      ; Clear screen again after bootscreen, for clean CLI
+    30 00000008 E80A01                      call clear_screen_rekanto
+    31                                  
+    32                                      ; Initial CLI message
+    33 0000000B 66BE[4E050000]              mov esi, welcome_cli_msg
+    34 00000011 E86F01                      call print_string_rekanto
+    35 00000014 66BE[59050000]              mov esi, newline_char_rekanto ; Blank line after welcome
+    36 0000001A E86601                      call print_string_rekanto
+    37                                  
+    38                                      ; --- Main CLI Loop ---
+    39                                  cli_loop_rekanto:
+    40 0000001D 66BE[5C050000]              mov esi, prompt_msg_rekanto  ; Display the prompt
+    41 00000023 E85D01                      call print_string_rekanto
+    42                                  
+    43                                      ; Read command from user
+    44 00000026 66BF[B7070000]              mov edi, input_buffer_rekanto ; Store input starting here
+    45 0000002C 6631C9                      xor ecx, ecx                  ; ECX = 0 (current input length)
+    46 0000002F E80702                      call read_input_line_rekanto ; Read a line of input
+    47                                  
+    48                                      ; A blank line after input for better readability
+    49 00000032 66BE[59050000]              mov esi, newline_char_rekanto
+    50 00000038 E84801                      call print_string_rekanto
+    51                                  
+    52                                      ; --- Process Command ---
+    53                                      ; Point ESI to the user's input buffer for comparisons
+    54 0000003B 66BE[B7070000]              mov esi, input_buffer_rekanto
+    55                                  
+    56                                      ; Compare full string for exact matches (help, clear, shutdown, ver)
+    57 00000041 66BB[AA050000]              mov ebx, help_cmd_str_rekanto
+    58 00000047 E8C104                      call compare_strings_rekanto
+    59 0000004A 7242                        jc .is_help_rekanto
+    60                                      
+    61 0000004C 66BB[AF050000]              mov ebx, clear_cmd_str_rekanto
+    62 00000052 E8B604                      call compare_strings_rekanto
+    63 00000055 7242                        jc .is_clear_rekanto
+    64                                  
+    65 00000057 66BB[C4050000]              mov ebx, shutdown_cmd_str_rekanto
+    66 0000005D E8AB04                      call compare_strings_rekanto
+    67 00000060 727A                        jc .is_shutdown_rekanto
+    68                                  
+    69 00000062 66BB[C0050000]              mov ebx, ver_cmd_str_rekanto     ; Check for "ver" command
+    70 00000068 E8A004                      call compare_strings_rekanto
+    71 0000006B 7251                        jc .is_ver_rekanto
+    72                                  
+    73                                      ; --- Handle "echo" command specifically ---
+    74                                      ; Check if input starts with "echo "
+    75 0000006D 66BB[BA050000]              mov ebx, echo_cmd_prefix_rekanto ; Points to "echo "
+    76 00000073 E8B904                      call compare_prefix_rekanto      ; New function to check prefix match
+    77 00000076 7227                        jc .is_echo_cmd_rekanto          ; If CF is set, it matches "echo "
+    78                                  
+    79                                      ; Handle "echo" command with no arguments ("echo" followed by Enter)
+    80 00000078 66BB[B5050000]              mov ebx, echo_cmd_str_rekanto    ; Points to "echo" (no trailing space)
+    81 0000007E E88A04                      call compare_strings_rekanto     ; Check for exact "echo" command
+    82 00000081 722F                        jc .is_echo_no_arg_rekanto
+    83                                  
+    84                                      ; If command not recognized
+    85 00000083 66BE[5F050000]              mov esi, unknown_cmd_msg_rekanto
+    86 00000089 E8F700                      call print_string_rekanto
+    87 0000008C EB8F                        jmp cli_loop_rekanto
+    88                                  
+    89                                  .is_help_rekanto:
+    90 0000008E 66BE[CD050000]              mov esi, help_msg_rekanto
+    91 00000094 E8EC00                      call print_string_rekanto
+    92 00000097 EB84                        jmp cli_loop_rekanto
+    93                                  
+    94                                  .is_clear_rekanto:
+    95 00000099 E87900                      call clear_screen_rekanto
+    96 0000009C E97EFF                      jmp cli_loop_rekanto
+    97                                  
+    98                                  .is_echo_cmd_rekanto:
+    99                                      ; ESI is already pointing to input_buffer_rekanto from above
+   100                                      ; It means input starts with "echo ", so we advance ESI past "echo " (5 chars)
+   101 0000009F 6683C605                    add esi, 5 ; Skip "e", "c", "h", "o", " "
+   102                                      
+   103                                      ; Now ESI points to the start of the argument to echo.
+   104                                      ; Print the rest of the string (the argument to echo)
+   105 000000A3 E8DD00                      call print_string_rekanto
+   106 000000A6 66BE[59050000]              mov esi, newline_char_rekanto ; Add a newline after the echoed text
+   107 000000AC E8D400                      call print_string_rekanto
+   108 000000AF E96BFF                      jmp cli_loop_rekanto
+   109                                  
+   110                                  .is_echo_no_arg_rekanto:
+   111                                      ; User typed "echo" exactly, with no arguments.
+   112 000000B2 66BE[59050000]              mov esi, newline_char_rekanto ; Just print a blank line.
+   113 000000B8 E8C800                      call print_string_rekanto
+   114 000000BB E95FFF                      jmp cli_loop_rekanto
+   115                                  
+   116                                  .is_ver_rekanto:
+   117 000000BE 66BE[DA060000]              mov esi, ver_msg_line1
+   118 000000C4 E8BC00                      call print_string_rekanto
+   119 000000C7 66BE[1E070000]              mov esi, ver_msg_line2
+   120 000000CD E8B300                      call print_string_rekanto
+   121 000000D0 66BE[45070000]              mov esi, ver_msg_line3
+   122 000000D6 E8AA00                      call print_string_rekanto
+   123 000000D9 E941FF                      jmp cli_loop_rekanto
+   124                                  
+   125                                  .is_shutdown_rekanto:
+   126 000000DC 66BE[8B070000]              mov esi, shutdown_msg_rekanto
+   127 000000E2 E89E00                      call print_string_rekanto
+   128 000000E5 FA                          cli                 ; Disable interrupts
+   129 000000E6 F4                          hlt                 ; Halt the CPU
+   130 000000E7 EBFE                        jmp $               ; Just in case, loop if HLT is ignored (it shouldn't be)
+   131                                  
+   132                                  
+   133                                  ; --- Subroutines (used by rekanto.asm) ---
+   134                                  
+   135                                  ; update_cursor_pm: Updates the hardware cursor position
+   136                                  ; based on current_cursor_pos_x and current_cursor_pos_y
+   137                                  update_cursor_pm:
+   138 000000E9 6660                        pushad
+   139 000000EB 668B16[0400]                mov edx, [current_cursor_pos_y]
+   140 000000F0 66B850000000                mov eax, 80
+   141 000000F6 66F7E2                      mul edx
+   142 000000F9 660306[0000]                add eax, [current_cursor_pos_x] ; EAX = position (row * 80 + col)
+   143                                  
+   144                                      ; Send position to CRT controller
+   145 000000FE BAD403                      mov dx, 0x3D4 ; CRT Controller Command Register
+   146 00000101 B00E                        mov al, 0x0E  ; Cursor Location High Register
+   147 00000103 EE                          out dx, al
+   148 00000104 42                          inc dx        ; CRT Controller Data Register (0x3D5)
+   149 00000105 88E0                        mov al, ah    ; High byte of position
+   150 00000107 EE                          out dx, al
+   151                                  
+   152 00000108 BAD403                      mov dx, 0x3D4
+   153 0000010B B00F                        mov al, 0x0F  ; Cursor Location Low Register
+   154 0000010D EE                          out dx, al
+   155 0000010E 42                          inc dx
+   156 0000010F 88E0                        mov al, ah    ; Low byte of position
+   157 00000111 EE                          out dx, al
+   158 00000112 6661                        popad
+   159 00000114 C3                          ret
+   160                                  
+   161                                  
+   162                                  ; clear_screen_rekanto: Clears the entire screen
+   163                                  ; Uses direct video memory access and updates cursor position
+   164                                  clear_screen_rekanto:
+   165 00000115 6660                        pushad
+   166 00000117 66BF00800B00                mov edi, VGA_TEXT_MODE_ADDR
+   167 0000011D 66B9D0070000                mov ecx, 80 * 25 ; Total characters on screen
+   168 00000123 B020                        mov al, ' '      ; Character to fill with
+   169 00000125 B407                        mov ah, DEFAULT_CHAR_ATTR ; Attribute
+   170 00000127 6689C2                      mov edx, eax     ; edx = char+attr word
+   171 0000012A 66C1E208                    shl edx, 8
+   172 0000012E 6609C2                      or edx, eax      ; edx = 0x07200720 (space with attribute, repeated twice)
+   173                                  
+   174                                      ; Fill dwords (4 bytes at a time)
+   175                                      .loop:
+   176 00000131 66AB                            stosd ; Store EAX (char+attr) into [EDI], increment EDI by 4
+   177 00000133 66AB                            stosd ; Store EAX (char+attr) into [EDI], increment EDI by 4
+   178 00000135 6649                            dec ecx ; Decrement character count by 2
+   179 00000137 6649                            dec ecx
+   180 00000139 6685C9                          test ecx, ecx
+   181 0000013C 75F3                            jnz .loop
+   182                                  
+   183                                      ; Reset cursor position
+   184 0000013E 66C706[0000]000000-         mov dword [current_cursor_pos_x], 0
+   184 00000146 00                 
+   185 00000147 66C706[0400]000000-         mov dword [current_cursor_pos_y], 0
+   185 0000014F 00                 
+   186 00000150 E896FF                      call update_cursor_pm
+   187 00000153 6661                        popad
+   188 00000155 C3                          ret
+   189                                  
+   190                                  ; scroll_screen_up_rekanto: Scrolls the screen up by one line
+   191                                  scroll_screen_up_rekanto:
+   192 00000156 6660                        pushad
+   193 00000158 66BEA0800B00                mov esi, VGA_TEXT_MODE_ADDR + (80 * 2) ; Source: Second row
+   194 0000015E 66BF00800B00                mov edi, VGA_TEXT_MODE_ADDR         ; Destination: First row
+   195 00000164 66B9C0030000                mov ecx, 80 * 24 * 2 / 4    ; Copy 24 rows, 2 bytes/char, in dwords
+   196 0000016A F366A5                      rep movsd                   ; Move 24 rows up
+   197                                  
+   198                                      ; Clear the last row
+   199 0000016D 66BF008F0B00                mov edi, VGA_TEXT_MODE_ADDR + (80 * 24 * 2) ; Start of last row
+   200 00000173 66B950000000                mov ecx, 80                 ; 80 characters to clear
+   201 00000179 B020                        mov al, ' '                 ; Space character
+   202 0000017B B407                        mov ah, DEFAULT_CHAR_ATTR   ; Attribute
+   203                                      .clear_last_row_loop:
+   204 0000017D AB                              stosw                   ; Store character and attribute
+   205 0000017E E2FD                            loop .clear_last_row_loop
+   206                                  
+   207 00000180 6661                        popad
+   208 00000182 C3                          ret
+   209                                  
+   210                                  ; print_string_rekanto: Prints a null-terminated string at ESI to VGA text mode
+   211                                  print_string_rekanto:
+   212 00000183 6660                        pushad
+   213                                      
+   214                                      ; Calculate current video memory pointer from cursor position
+   215 00000185 66A1[0400]                  mov eax, [current_cursor_pos_y]
+   216 00000189 66BB50000000                mov ebx, 80
+   217 0000018F 66F7E3                      mul ebx                     ; EAX = row * 80
+   218 00000192 660306[0000]                add eax, [current_cursor_pos_x] ; EAX = total chars offset
+   219 00000197 66D1E0                      shl eax, 1                  ; EAX = byte offset (char * 2 bytes/char)
+   220 0000019A 660500800B00                add eax, VGA_TEXT_MODE_ADDR ; EAX = actual video memory address
+   221 000001A0 6689C7                      mov edi, eax                ; EDI = destination in VRAM
+   222                                  
+   223                                  .loop:
+   224 000001A3 AC                          lodsb                       ; Load byte from [ESI] into AL, increment ESI
+   225 000001A4 3C00                        cmp al, 0                   ; Check for null terminator
+   226 000001A6 0F848900                    je .done
+   227                                  
+   228 000001AA 3C0D                        cmp al, 0x0D                ; Check for Carriage Return (CR)
+   229 000001AC 7416                        je .handle_cr
+   230                                  
+   231 000001AE 3C0A                        cmp al, 0x0A                ; Check for Line Feed (LF)
+   232 000001B0 743B                        je .handle_lf
+   233                                  
+   234                                      ; Handle regular character
+   235 000001B2 B407                        mov ah, DEFAULT_CHAR_ATTR   ; Character attribute (white on black)
+   236 000001B4 AB                          stosw                       ; Store AL (char) and AH (attr) as a word into [EDI], increment EDI by 2
+   237                                      
+   238 000001B5 66FF06[0000]                inc dword [current_cursor_pos_x] ; Increment X cursor
+   239 000001BA 66833E[0000]50              cmp dword [current_cursor_pos_x], 80 ; Check if end of line
+   240 000001C0 7C6B                        jl .continue_loop           ; Not end of line, continue
+   241                                  
+   242                                      ; If end of line, implicitly move to next line
+   243 000001C2 EB37                        jmp .handle_lf_continue
+   244                                  
+   245                                  .handle_cr:
+   246                                      ; Reset X cursor to 0
+   247 000001C4 66C706[0000]000000-         mov dword [current_cursor_pos_x], 0
+   247 000001CC 00                 
+   248                                      ; Recalculate EDI to start of line based on new X
+   249 000001CD 66A1[0400]                  mov eax, [current_cursor_pos_y]
+   250 000001D1 66BB50000000                mov ebx, 80
+   251 000001D7 66F7E3                      mul ebx
+   252 000001DA 660306[0000]                add eax, [current_cursor_pos_x]
+   253 000001DF 66D1E0                      shl eax, 1
+   254 000001E2 660500800B00                add eax, VGA_TEXT_MODE_ADDR
+   255 000001E8 6689C7                      mov edi, eax
+   256 000001EB EB40                        jmp .continue_loop
+   257                                  
+   258                                  .handle_lf:
+   259                                      ; Increment Y cursor
+   260 000001ED 66FF06[0400]                inc dword [current_cursor_pos_y]
+   261                                      ; Reset X cursor to 0
+   262 000001F2 66C706[0000]000000-         mov dword [current_cursor_pos_x], 0
+   262 000001FA 00                 
+   263                                  
+   264                                  .handle_lf_continue:
+   265                                      ; Check for scrolling if we hit the end of the screen
+   266 000001FB 66833E[0400]19              cmp dword [current_cursor_pos_y], 25 ; Beyond last row?
+   267 00000201 7C0C                        jl .recalc_edi ; No scrolling needed, continue
+   268                                  
+   269                                      ; Scroll screen up by one line
+   270 00000203 E850FF                      call scroll_screen_up_rekanto
+   271 00000206 66C706[0400]180000-         mov dword [current_cursor_pos_y], 24 ; Cursor is now on the last line (index 24)
+   271 0000020E 00                 
+   272                                      ; EDI should already be set to start of last line by scroll_screen_up_rekanto if we reset it here
+   273                                  
+   274                                  .recalc_edi:
+   275                                      ; Recalculate EDI based on new cursor position
+   276 0000020F 66A1[0400]                  mov eax, [current_cursor_pos_y]
+   277 00000213 66BB50000000                mov ebx, 80
+   278 00000219 66F7E3                      mul ebx
+   279 0000021C 660306[0000]                add eax, [current_cursor_pos_x]
+   280 00000221 66D1E0                      shl eax, 1
+   281 00000224 660500800B00                add eax, VGA_TEXT_MODE_ADDR
+   282 0000022A 6689C7                      mov edi, eax
+   283                                  
+   284                                  .continue_loop:
+   285 0000022D E8B9FE                      call update_cursor_pm ; Update hardware cursor
+   286 00000230 E970FF                      jmp .loop
+   287                                  
+   288                                  .done:
+   289 00000233 E8B3FE                      call update_cursor_pm ; Ensure cursor is updated after string
+   290 00000236 6661                        popad
+   291 00000238 C3                          ret
+   292                                  
+   293                                  ; read_input_line_rekanto: Reads characters until Enter (0x1C scan code) is pressed or buffer is full.
+   294                                  ; Stores input in input_buffer_rekanto (DI). Updates ECX with length.
+   295                                  read_input_line_rekanto:
+   296 00000239 6660                        pushad
+   297 0000023B 66BF[B7070000]              mov edi, input_buffer_rekanto ; EDI points to buffer start
+   298 00000241 6631C9                      xor ecx, ecx                  ; ECX = 0 (current length of input)
+   299                                  
+   300                                  .read_char_loop:
+   301                                      ; Poll keyboard status port 0x64 (status register) until bit 0 (output buffer full) is set
+   302                                      .wait_for_key:
+   303 00000244 E464                            in al, 0x64
+   304 00000246 A801                            test al, 0x01 ; Test bit 0
+   305 00000248 74FA                            jz .wait_for_key
+   306                                  
+   307                                      ; Read scan code from keyboard data port 0x60
+   308 0000024A E460                        in al, 0x60
+   309                                  
+   310                                      ; Check if it's a key press (bit 7 clear for press, set for release)
+   311 0000024C A880                        test al, 0x80
+   312 0000024E 75F4                        jnz .read_char_loop ; If bit 7 is set, it's a key release, ignore
+   313                                  
+   314                                      ; Store scan code in AH for now, AL for character (will map later)
+   315 00000250 88C4                        mov ah, al
+   316                                  
+   317                                      ; --- Basic Scan Code to ASCII Mapping (Limited for simplicity) ---
+   318                                      ; This is a very basic mapping. A full keyboard driver would be more complex.
+   319                                      ; Only handling common keys (a-z, 0-9, space, enter, backspace)
+   320 00000252 30C0                        xor al, al ; Clear AL for character
+   321                                  
+   322 00000254 80FC1C                      cmp ah, 0x1C ; Enter key (scan code 0x1C)
+   323 00000257 0F842202                    je .done_reading
+   324                                  
+   325 0000025B 80FC0E                      cmp ah, 0x0E ; Backspace key (scan code 0x0E)
+   326 0000025E 0F84BF01                    je .handle_backspace
+   327                                  
+   328                                      ; Numeric keys 0-9
+   329 00000262 80FC0B                      cmp ah, 0x0B ; 0
+   330 00000265 0F84FF00                    je .map_0
+   331 00000269 80FC02                      cmp ah, 0x02 ; 1
+   332 0000026C 0F84FD00                    je .map_1
+   333 00000270 80FC03                      cmp ah, 0x03 ; 2
+   334 00000273 0F84FB00                    je .map_2
+   335 00000277 80FC04                      cmp ah, 0x04 ; 3
+   336 0000027A 0F84F900                    je .map_3
+   337 0000027E 80FC05                      cmp ah, 0x05 ; 4
+   338 00000281 0F84F700                    je .map_4
+   339 00000285 80FC06                      cmp ah, 0x06 ; 5
+   340 00000288 0F84F500                    je .map_5
+   341 0000028C 80FC07                      cmp ah, 0x07 ; 6
+   342 0000028F 0F84F200                    je .map_6
+   343 00000293 80FC08                      cmp ah, 0x08 ; 7
+   344 00000296 0F84EF00                    je .map_7
+   345 0000029A 80FC09                      cmp ah, 0x09 ; 8
+   346 0000029D 0F84EC00                    je .map_8
+   347 000002A1 80FC0A                      cmp ah, 0x0A ; 9
+   348 000002A4 0F84E900                    je .map_9
+   349                                  
+   350                                      ; Alphabet keys (simple mapping, assuming lowercase for now)
+   351 000002A8 80FC1E                      cmp ah, 0x1E ; A
+   352 000002AB 0F84E600                    je .map_a
+   353 000002AF 80FC30                      cmp ah, 0x30 ; B
+   354 000002B2 0F84E300                    je .map_b
+   355 000002B6 80FC2E                      cmp ah, 0x2E ; C
+   356 000002B9 0F84E000                    je .map_c
+   357 000002BD 80FC20                      cmp ah, 0x20 ; D
+   358 000002C0 0F84DD00                    je .map_d
+   359 000002C4 80FC12                      cmp ah, 0x12 ; E
+   360 000002C7 0F84DA00                    je .map_e
+   361 000002CB 80FC21                      cmp ah, 0x21 ; F
+   362 000002CE 0F84D700                    je .map_f
+   363 000002D2 80FC22                      cmp ah, 0x22 ; G
+   364 000002D5 0F84D400                    je .map_g
+   365 000002D9 80FC23                      cmp ah, 0x23 ; H
+   366 000002DC 0F84D100                    je .map_h
+   367 000002E0 80FC17                      cmp ah, 0x17 ; I
+   368 000002E3 0F84CE00                    je .map_i
+   369 000002E7 80FC24                      cmp ah, 0x24 ; J
+   370 000002EA 0F84CB00                    je .map_j
+   371 000002EE 80FC25                      cmp ah, 0x25 ; K
+   372 000002F1 0F84C800                    je .map_k
+   373 000002F5 80FC26                      cmp ah, 0x26 ; L
+   374 000002F8 0F84C500                    je .map_l
+   375 000002FC 80FC32                      cmp ah, 0x32 ; M
+   376 000002FF 0F84C200                    je .map_m
+   377 00000303 80FC31                      cmp ah, 0x31 ; N
+   378 00000306 0F84BF00                    je .map_n
+   379 0000030A 80FC18                      cmp ah, 0x18 ; O
+   380 0000030D 0F84BC00                    je .map_o
+   381 00000311 80FC19                      cmp ah, 0x19 ; P
+   382 00000314 0F84B900                    je .map_p
+   383 00000318 80FC10                      cmp ah, 0x10 ; Q
+   384 0000031B 0F84B600                    je .map_q
+   385 0000031F 80FC13                      cmp ah, 0x13 ; R
+   386 00000322 0F84B300                    je .map_r
+   387 00000326 80FC1F                      cmp ah, 0x1F ; S
+   388 00000329 0F84B000                    je .map_s
+   389 0000032D 80FC14                      cmp ah, 0x14 ; T
+   390 00000330 0F84AD00                    je .map_t
+   391 00000334 80FC16                      cmp ah, 0x16 ; U
+   392 00000337 0F84AA00                    je .map_u
+   393 0000033B 80FC2F                      cmp ah, 0x2F ; V
+   394 0000033E 0F84A700                    je .map_v
+   395 00000342 80FC11                      cmp ah, 0x11 ; W
+   396 00000345 0F84A400                    je .map_w
+   397 00000349 80FC2D                      cmp ah, 0x2D ; X
+   398 0000034C 0F84A100                    je .map_x
+   399 00000350 80FC15                      cmp ah, 0x15 ; Y
+   400 00000353 0F849E00                    je .map_y
+   401 00000357 80FC2C                      cmp ah, 0x2C ; Z
+   402 0000035A 0F849B00                    je .map_z
+   403                                  
+   404 0000035E 80FC39                      cmp ah, 0x39 ; Spacebar
+   405 00000361 0F849800                    je .map_space
+   406                                  
+   407 00000365 E9DCFE                      jmp .read_char_loop ; If not a mapped key, ignore it
+   408                                  
+   409 00000368 B030                        .map_0: mov al, '0' ; Continue with rest of keyboard mappings
+   410 0000036A E99400                          jmp .store_char
+   411 0000036D B031                        .map_1: mov al, '1'
+   412 0000036F E98F00                          jmp .store_char
+   413 00000372 B032                        .map_2: mov al, '2'
+   414 00000374 E98A00                          jmp .store_char
+   415 00000377 B033                        .map_3: mov al, '3'
+   416 00000379 E98500                          jmp .store_char
+   417 0000037C B034                        .map_4: mov al, '4'
+   418 0000037E E98000                          jmp .store_char
+   419 00000381 B035                        .map_5: mov al, '5'
+   420 00000383 EB7C                            jmp .store_char
+   421 00000385 B036                        .map_6: mov al, '6'
+   422 00000387 EB78                            jmp .store_char
+   423 00000389 B037                        .map_7: mov al, '7'
+   424 0000038B EB74                            jmp .store_char
+   425 0000038D B038                        .map_8: mov al, '8'
+   426 0000038F EB70                            jmp .store_char
+   427 00000391 B039                        .map_9: mov al, '9'
+   428 00000393 EB6C                            jmp .store_char
+   429 00000395 B061                        .map_a: mov al, 'a'
+   430 00000397 EB68                            jmp .store_char
+   431 00000399 B062                        .map_b: mov al, 'b'
+   432 0000039B EB64                            jmp .store_char
+   433 0000039D B063                        .map_c: mov al, 'c'
+   434 0000039F EB60                            jmp .store_char
+   435 000003A1 B064                        .map_d: mov al, 'd'
+   436 000003A3 EB5C                            jmp .store_char
+   437 000003A5 B065                        .map_e: mov al, 'e'
+   438 000003A7 EB58                            jmp .store_char
+   439 000003A9 B066                        .map_f: mov al, 'f'
+   440 000003AB EB54                            jmp .store_char
+   441 000003AD B067                        .map_g: mov al, 'g'
+   442 000003AF EB50                            jmp .store_char
+   443 000003B1 B068                        .map_h: mov al, 'h'
+   444 000003B3 EB4C                            jmp .store_char
+   445 000003B5 B069                        .map_i: mov al, 'i'
+   446 000003B7 EB48                            jmp .store_char
+   447 000003B9 B06A                        .map_j: mov al, 'j'
+   448 000003BB EB44                            jmp .store_char
+   449 000003BD B06B                        .map_k: mov al, 'k'
+   450 000003BF EB40                            jmp .store_char
+   451 000003C1 B06C                        .map_l: mov al, 'l'
+   452 000003C3 EB3C                            jmp .store_char
+   453 000003C5 B06D                        .map_m: mov al, 'm'
+   454 000003C7 EB38                            jmp .store_char
+   455 000003C9 B06E                        .map_n: mov al, 'n'
+   456 000003CB EB34                            jmp .store_char
+   457 000003CD B06F                        .map_o: mov al, 'o'
+   458 000003CF EB30                            jmp .store_char
+   459 000003D1 B070                        .map_p: mov al, 'p'
+   460 000003D3 EB2C                            jmp .store_char
+   461 000003D5 B071                        .map_q: mov al, 'q'
+   462 000003D7 EB28                            jmp .store_char
+   463 000003D9 B072                        .map_r: mov al, 'r'
+   464 000003DB EB24                            jmp .store_char
+   465 000003DD B073                        .map_s: mov al, 's'
+   466 000003DF EB20                            jmp .store_char
+   467 000003E1 B074                        .map_t: mov al, 't'
+   468 000003E3 EB1C                            jmp .store_char
+   469 000003E5 B075                        .map_u: mov al, 'u'
+   470 000003E7 EB18                            jmp .store_char
+   471 000003E9 B076                        .map_v: mov al, 'v'
+   472 000003EB EB14                            jmp .store_char
+   473 000003ED B077                        .map_w: mov al, 'w'
+   474 000003EF EB10                            jmp .store_char
+   475 000003F1 B078                        .map_x: mov al, 'x'
+   476 000003F3 EB0C                            jmp .store_char
+   477 000003F5 B079                        .map_y: mov al, 'y'
+   478 000003F7 EB08                            jmp .store_char
+   479 000003F9 B07A                        .map_z: mov al, 'z'
+   480 000003FB EB04                            jmp .store_char
+   481 000003FD B020                        .map_space: mov al, ' '
+   482 000003FF EB00                            jmp .store_char
+   483                                  
+   484                                  .store_char:
+   485                                      ; Only process if a valid character was mapped (AL is not 0)
+   486 00000401 3C00                        cmp al, 0
+   487 00000403 0F843DFE                    je .read_char_loop
+   488                                  
+   489                                      ; Check if buffer is full
+   490 00000407 6683F93F                    cmp ecx, MAX_COMMAND_LEN - 1 ; Leave space for null terminator
+   491 0000040B 0F8735FE                    ja .read_char_loop           ; If buffer full, ignore character
+   492                                  
+   493                                      ; Store character in buffer
+   494 0000040F AA                          stosb                        ; Store AL into [EDI], increment EDI
+   495 00000410 6641                        inc ecx                      ; Increment length
+   496                                  
+   497                                      ; Echo character to screen
+   498 00000412 6656                        push esi                     ; Save ESI (used by print_char_rekanto)
+   499 00000414 6689FE                      mov esi, edi                 ; Current cursor position for print_char_rekanto
+   500 00000417 664E                        dec esi                      ; Move back to the character just written
+   501 00000419 E87100                      call print_char_rekanto      ; Print the character
+   502 0000041C 665E                        pop esi                      ; Restore ESI
+   503                                  
+   504 0000041E E923FE                      jmp .read_char_loop
+   505                                  
+   506                                  .handle_backspace:
+   507 00000421 6683F900                    cmp ecx, 0                   ; Don't backspace if buffer is empty
+   508 00000425 0F841BFE                    je .read_char_loop
+   509                                  
+   510 00000429 6649                        dec ecx                      ; Decrement length
+   511 0000042B 664F                        dec edi                      ; Move EDI back
+   512 0000042D 67C60700                    mov byte [edi], 0            ; Clear character in buffer
+   513                                  
+   514                                      ; Erase character from screen: backspace, print space, backspace again
+   515                                      ; Need to manually adjust cursor for backspace visual effect
+   516 00000431 66FF0E[0000]                dec dword [current_cursor_pos_x]
+   517 00000436 66833E[0000]FF              cmp dword [current_cursor_pos_x], 0xFFFFFFFF ; Check for wrap around (e.g., from 0 to -1)
+   518 0000043C 750E                        jne .skip_y_backtrack
+   519                                      ; If wrapped, it means we were at column 0, move to previous row, last column
+   520 0000043E 66C706[0000]4F0000-         mov dword [current_cursor_pos_x], 79
+   520 00000446 00                 
+   521 00000447 66FF0E[0400]                dec dword [current_cursor_pos_y]
+   522                                  .skip_y_backtrack:
+   523 0000044C E89AFC                      call update_cursor_pm
+   524                                  
+   525 0000044F 6656                        push esi                     ; Save ESI
+   526 00000451 66BE[B5070000]              mov esi, char_space          ; Print a space over the erased char
+   527 00000457 E88B00                      call print_char_rekanto_no_cursor_update ; Use specialized print function
+   528 0000045A 665E                        pop esi
+   529                                  
+   530 0000045C 66FF0E[0000]                dec dword [current_cursor_pos_x] ; Move cursor back again to 'over' the space
+   531 00000461 66833E[0000]FF              cmp dword [current_cursor_pos_x], 0xFFFFFFFF ; Check for wrap around
+   532 00000467 750E                        jne .skip_y_backtrack2
+   533 00000469 66C706[0000]4F0000-         mov dword [current_cursor_pos_x], 79
+   533 00000471 00                 
+   534 00000472 66FF0E[0400]                dec dword [current_cursor_pos_y]
+   535                                  .skip_y_backtrack2:
+   536 00000477 E86FFC                      call update_cursor_pm
+   537                                  
+   538 0000047A E9C7FD                      jmp .read_char_loop
+   539                                  
+   540                                  .done_reading:
+   541 0000047D 67C60700                    mov byte [edi], 0            ; Null-terminate the input string
+   542                                      ; Print a newline after user presses Enter, but before prompt
+   543 00000481 66BE[59050000]              mov esi, newline_char_rekanto
+   544 00000487 E8F9FC                      call print_string_rekanto
+   545 0000048A 6661                        popad                        ; Restore registers
+   546 0000048C C3                          ret
+   547                                  
+   548                                  ; print_char_rekanto: Prints a single character from AL to VGA text mode
+   549                                  ; and updates cursor position.
+   550                                  print_char_rekanto:
+   551 0000048D 6660                        pushad
+   552                                      ; Calculate current video memory pointer from cursor position
+   553 0000048F 66A1[0400]                  mov eax, [current_cursor_pos_y]
+   554 00000493 66BB50000000                mov ebx, 80
+   555 00000499 66F7E3                      mul ebx                     ; EAX = row * 80
+   556 0000049C 660306[0000]                add eax, [current_cursor_pos_x] ; EAX = total chars offset
+   557 000004A1 66D1E0                      shl eax, 1                  ; EAX = byte offset (char * 2 bytes/char)
+   558 000004A4 660500800B00                add eax, VGA_TEXT_MODE_ADDR ; EAX = actual video memory address
+   559 000004AA 6689C7                      mov edi, eax                ; EDI = destination in VRAM
+   560                                  
+   561                                      ; Character to print is in AL from calling function
+   562 000004AD B407                        mov ah, DEFAULT_CHAR_ATTR   ; Character attribute (white on black)
+   563 000004AF AB                          stosw                       ; Store AL (char) and AH (attr) as a word into [EDI], increment EDI by 2
+   564                                  
+   565 000004B0 66FF06[0000]                inc dword [current_cursor_pos_x] ; Increment X cursor
+   566 000004B5 66833E[0000]50              cmp dword [current_cursor_pos_x], 80 ; Check if end of line
+   567 000004BB 7C22                        jl .no_newline_needed           ; Not end of line, continue
+   568                                  
+   569                                      ; If end of line, move to next line
+   570 000004BD 66C706[0000]000000-         mov dword [current_cursor_pos_x], 0
+   570 000004C5 00                 
+   571 000004C6 66FF06[0400]                inc dword [current_cursor_pos_y]
+   572                                  
+   573                                      ; Check for scrolling if we hit the end of the screen
+   574 000004CB 66833E[0400]19              cmp dword [current_cursor_pos_y], 25 ; Beyond last row?
+   575 000004D1 7C0C                        jl .no_scroll_needed ; No scrolling needed, continue
+   576                                  
+   577                                      ; Scroll screen up by one line
+   578 000004D3 E880FC                      call scroll_screen_up_rekanto
+   579 000004D6 66C706[0400]180000-         mov dword [current_cursor_pos_y], 24 ; Cursor is now on the last line (index 24)
+   579 000004DE 00                 
+   580                                  
+   581                                  .no_scroll_needed:
+   582                                  .no_newline_needed:
+   583 000004DF E807FC                      call update_cursor_pm ; Update hardware cursor
+   584 000004E2 6661                        popad
+   585 000004E4 C3                          ret
+   586                                  
+   587                                  ; print_char_rekanto_no_cursor_update: Prints a single char from AL to VGA text mode
+   588                                  ; at the current cursor position, but does NOT update cursor position or scroll.
+   589                                  ; Used internally by handle_backspace for visual effect.
+   590                                  print_char_rekanto_no_cursor_update:
+   591 000004E5 6660                        pushad
+   592                                      ; Calculate current video memory pointer from cursor position
+   593 000004E7 66A1[0400]                  mov eax, [current_cursor_pos_y]
+   594 000004EB 66BB50000000                mov ebx, 80
+   595 000004F1 66F7E3                      mul ebx                     ; EAX = row * 80
+   596 000004F4 660306[0000]                add eax, [current_cursor_pos_x] ; EAX = total chars offset
+   597 000004F9 66D1E0                      shl eax, 1                  ; EAX = byte offset (char * 2 bytes/char)
+   598 000004FC 660500800B00                add eax, VGA_TEXT_MODE_ADDR ; EAX = actual video memory address
+   599 00000502 6689C7                      mov edi, eax                ; EDI = destination in VRAM
+   600                                  
+   601                                      ; Character to print is in AL from calling function
+   602 00000505 B407                        mov ah, DEFAULT_CHAR_ATTR   ; Character attribute (white on black)
+   603 00000507 AB                          stosw                       ; Store AL (char) and AH (attr) as a word into [EDI], increment EDI by 2
+   604                                  
+   605 00000508 6661                        popad
+   606 0000050A C3                          ret
+   607                                  
+   608                                  ; compare_strings_rekanto: Compares null-terminated string at ESI with string at EBX.
+   609                                  ; Sets Carry Flag (CF) if strings are identical, clears CF otherwise.
+   610                                  ; Preserves ESI, EBX, ECX, EDI.
+   611                                  compare_strings_rekanto:
+   612 0000050B 6660                        pushad
+   613                                      
+   614 0000050D 6689F7                      mov edi, esi             ; Use EDI to iterate through ESI (input)
+   615 00000510 6689DE                      mov esi, ebx             ; ESI will iterate through EBX (command)
+   616                                      
+   617                                  .loop_compare:
+   618 00000513 AC                          lodsb                    ; Load byte from [ESI] (command char) into AL, ESI++
+   619 00000514 678A1F                      mov bl, byte [edi]       ; Load byte from [EDI] (input char) into BL
+   620                                      
+   621 00000517 38D8                        cmp al, bl               ; Compare characters
+   622 00000519 7508                        jne .no_match            ; If not equal, strings don't match
+   623                                  
+   624 0000051B 3C00                        cmp al, 0                ; Check if we reached null terminator for command string
+   625 0000051D 7407                        je .match                ; If command string ended, and so did input, it's a match
+   626                                  
+   627 0000051F 6647                        inc edi                  ; Move to next input char
+   628 00000521 EBF0                        jmp .loop_compare        ; Continue comparison
+   629                                  
+   630                                  .no_match:
+   631 00000523 F8                          clc                      ; Clear Carry Flag (no match)
+   632 00000524 EB06                        jmp .done_compare
+   633                                  
+   634                                  .match:
+   635 00000526 80FB00                      cmp bl, 0                ; Ensure input string also ended at the same point
+   636 00000529 75F8                        jne .no_match            ; If input string is longer, it's not a match
+   637                                  
+   638 0000052B F9                          stc                      ; Set Carry Flag (match)
+   639                                  
+   640                                  .done_compare:
+   641 0000052C 6661                        popad
+   642 0000052E C3                          ret
+   643                                  
+   644                                  ; compare_prefix_rekanto: Compares null-terminated string at EBX (prefix) with start of string at ESI (input).
+   645                                  ; Sets Carry Flag (CF) if EBX matches the start of ESI.
+   646                                  ; Preserves ESI, EBX, ECX, EDI.
+   647                                  ; Input: ESI = pointer to full input string, EBX = pointer to prefix string (e.g., "echo ")
+   648                                  compare_prefix_rekanto:
+   649 0000052F 6660                        pushad
+   650                                      
+   651 00000531 6689F7                      mov edi, esi             ; EDI iterates through input string
+   652 00000534 6689DE                      mov esi, ebx             ; ESI iterates through prefix string (e.g., "echo ")
+   653                                      
+   654                                  .loop_compare_prefix:
+   655 00000537 AC                          lodsb                    ; Load byte from [ESI] (prefix char) into AL, ESI++
+   656 00000538 3C00                        cmp al, 0                ; Check if we reached null terminator for prefix string
+   657 0000053A 740E                        je .match_prefix         ; If prefix string ended, it's a match
+   658                                  
+   659 0000053C 678A1F                      mov bl, byte [edi]       ; Load byte from [EDI] (input char) into BL
+   660 0000053F 38D8                        cmp al, bl               ; Compare characters
+   661 00000541 7504                        jne .no_match_prefix     ; If not equal, no match
+   662                                  
+   663 00000543 6647                        inc edi                  ; Move to next input char in input_buffer
+   664 00000545 EBF0                        jmp .loop_compare_prefix ; Continue comparison
+   665                                  
+   666                                  .no_match_prefix:
+   667 00000547 F8                          clc                      ; Clear Carry Flag (no match)
+   668 00000548 EB01                        jmp .done_compare_prefix
+   669                                  
+   670                                  .match_prefix:
+   671 0000054A F9                          stc                      ; Set Carry Flag (match)
+   672                                  
+   673                                  .done_compare_prefix:
+   674 0000054B 6661                        popad
+   675 0000054D C3                          ret
+   676                                  
+   677                                  ; --- Data Messages (for rekanto.asm) ---
+   678 0000054E 57656C636F6D65210D-     welcome_cli_msg     db 'Welcome!', 0x0D, 0x0A, 0
+   678 00000557 0A00               
+   679                                  
+   680 00000559 0D0A00                  newline_char_rekanto db 0x0D, 0x0A, 0 ; Separate newline for this module
+   681                                  
+   682 0000055C 3E2000                  prompt_msg_rekanto          db '> ', 0
+   683 0000055F 436F6D6D616E642069-     unknown_cmd_msg_rekanto     db 'Command is not recognized, type "help" for a list of available commands.', 0x0D, 0x0A, 0
+   683 00000568 73206E6F7420726563-
+   683 00000571 6F676E697A65642C20-
+   683 0000057A 74797065202268656C-
+   683 00000583 702220666F72206120-
+   683 0000058C 6C697374206F662061-
+   683 00000595 7661696C61626C6520-
+   683 0000059E 636F6D6D616E64732E-
+   683 000005A7 0D0A00             
+   684                                  
+   685                                  ; Command strings (must be null-terminated)
+   686 000005AA 68656C7000              help_cmd_str_rekanto        db 'help', 0
+   687 000005AF 636C65617200            clear_cmd_str_rekanto       db 'clear', 0
+   688 000005B5 6563686F00              echo_cmd_str_rekanto        db 'echo', 0        ; For exact "echo" command
+   689 000005BA 6563686F2000            echo_cmd_prefix_rekanto     db 'echo ', 0       ; For "echo " followed by arguments
+   690 000005C0 76657200                ver_cmd_str_rekanto         db 'ver', 0         ; New 'ver' command string
+   691 000005C4 73687574646F776E00      shutdown_cmd_str_rekanto    db 'shutdown', 0
+   692                                  
+   693                                  ; Help message
+   694 000005CD 417661696C61626C65-     help_msg_rekanto            db 'Available commands:', 0x0D, 0x0A
+   694 000005D6 20636F6D6D616E6473-
+   694 000005DF 3A0D0A             
+   695 000005E2 202068656C70202020-                                 db '  help         - Display this help message', 0x0D, 0x0A
+   695 000005EB 2020202020202D2044-
+   695 000005F4 6973706C6179207468-
+   695 000005FD 69732068656C70206D-
+   695 00000606 6573736167650D0A   
+   696 0000060E 2020636C6561722020-                                 db '  clear        - Clear the screen', 0x0D, 0x0A
+   696 00000617 2020202020202D2043-
+   696 00000620 6C6561722074686520-
+   696 00000629 73637265656E0D0A   
+   697 00000631 20206563686F203C74-                                 db '  echo <text>  - Prints text (e.g., echo Hello World)', 0x0D, 0x0A
+   697 0000063A 6578743E20202D2050-
+   697 00000643 72696E747320746578-
+   697 0000064C 742028652E672E2C20-
+   697 00000655 6563686F2048656C6C-
+   697 0000065E 6F20576F726C64290D-
+   697 00000667 0A                 
+   698 00000668 202076657220202020-                                 db '  ver          - Display version information', 0x0D, 0x0A
+   698 00000671 2020202020202D2044-
+   698 0000067A 6973706C6179207665-
+   698 00000683 7273696F6E20696E66-
+   698 0000068C 6F726D6174696F6E0D-
+   698 00000695 0A                 
+   699 00000696 202073687574646F77-                                 db '  shutdown     - Halts the system', 0x0D, 0x0A
+   699 0000069F 6E20202020202D2048-
+   699 000006A8 616C74732074686520-
+   699 000006B1 73797374656D0D0A   
+   700 000006B9 2020284D6F72652063-                                 db '  (More commands coming soon!)', 0x0D, 0x0A, 0
+   700 000006C2 6F6D6D616E64732063-
+   700 000006CB 6F6D696E6720736F6F-
+   700 000006D4 6E21290D0A00       
+   701                                  
+   702                                  ; Version messages for 'ver' command
+   703 000006DA 486F72696279746520-     ver_msg_line1       db 'Horibyte Arctic Server Version 0.1.5 - PreAlpha Developer Release', 0x0D, 0x0A, 0
+   703 000006E3 417263746963205365-
+   703 000006EC 727665722056657273-
+   703 000006F5 696F6E20302E312E35-
+   703 000006FE 202D20507265416C70-
+   703 00000707 686120446576656C6F-
+   703 00000710 7065722052656C6561-
+   703 00000719 73650D0A00         
+   704 0000071E 33322D426974205072-     ver_msg_line2       db '32-Bit Protected Mode Developer Test', 0x0D, 0x0A, 0
+   704 00000727 6F746563746564204D-
+   704 00000730 6F646520446576656C-
+   704 00000739 6F7065722054657374-
+   704 00000742 0D0A00             
+   705 00000745 436F70797269676874-     ver_msg_line3       db 'Copyright (c) 2025 Horibyte. Source code licensed under GNU GPL 3.0', 0x0D, 0x0A, 0
+   705 0000074E 202863292032303235-
+   705 00000757 20486F726962797465-
+   705 00000760 2E20536F7572636520-
+   705 00000769 636F6465206C696365-
+   705 00000772 6E73656420756E6465-
+   705 0000077B 7220474E552047504C-
+   705 00000784 20332E300D0A00     
+   706                                  
+   707 0000078B 4F7065726174696F6E-     shutdown_msg_rekanto        db 'Operation not supported. System halted.', 0x0D, 0x0A, 0
+   707 00000794 206E6F742073757070-
+   707 0000079D 6F727465642E205379-
+   707 000007A6 7374656D2068616C74-
+   707 000007AF 65642E0D0A00       
+   708                                  
+   709 000007B5 2000                    char_space          db ' ', 0 ; Single space character for backspace visual
+   710                                  
+   711                                  ; --- Buffers ---
+   712 000007B7 <res 40h>               input_buffer_rekanto resb MAX_COMMAND_LEN ; Reserve space for user input
+   712          ******************       warning: uninitialized space declared in .text section: zeroing [-w+zeroing]
+   713                                  
+   714                                  ; --- Padding ---
+   715                                  ; Optional: If you need to pad this file to a specific size, e.g., 4KB
+   716                                  ; times (0x1000 - ($ - $$)) db 0
